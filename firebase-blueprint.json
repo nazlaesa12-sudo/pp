@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Produk skincare di etalase Nazla Skinmart",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 150 },
+        "category": { "type": "string", "enum": ["Pembersih & Toner", "Serum & Treatment", "Moisturizer & Sunscreen"] },
+        "price": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "rating": { "type": "number" },
+        "soldCount": { "type": "number" },
+        "description": { "type": "string", "maxLength": 1000 },
+        "ingredients": { "type": "string", "maxLength": 500 },
+        "howToUse": { "type": "string", "maxLength": 500 },
+        "imageUrl": { "type": "string", "maxLength": 500 },
+        "badge": { "type": "string", "maxLength": 50 },
+        "volume": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "category", "price", "stock"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Pesanan belanja pelanggan di Nazla Skinmart",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "string", "maxLength": 50 },
+        "customerName": { "type": "string", "maxLength": 100 },
+        "customerPhone": { "type": "string", "maxLength": 30 },
+        "customerEmail": { "type": "string", "maxLength": 100 },
+        "shippingAddress": { "type": "string", "maxLength": 500 },
+        "city": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "items": { "type": "array" },
+        "totalItems": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "shippingFee": { "type": "number" },
+        "discount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["Menunggu Pembayaran", "Menunggu Verifikasi", "Diproses", "Dikirim", "Selesai", "Dibatalkan"] },
+        "paymentProofUrl": { "type": "string" },
+        "paymentSenderBank": { "type": "string", "maxLength": 50 },
+        "paymentSenderName": { "type": "string", "maxLength": 100 },
+        "paymentProofUploadedAt": { "type": "string" },
+        "adminNotes": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["orderNumber", "customerName", "customerPhone", "items", "totalAmount", "status"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Data pelanggan terdaftar dan riwayat belanja",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "email": { "type": "string", "maxLength": 100 },
+        "address": { "type": "string", "maxLength": 500 },
+        "city": { "type": "string", "maxLength": 100 },
+        "totalOrders": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "lastOrderDate": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "phone"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Pengguna berwenang untuk administrasi Nazla Skinmart",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "Product" },
+      "description": "Koleksi data produk skincare dan stok"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "Order" },
+      "description": "Koleksi pesanan pelanggan dan status pembayaran"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "Customer" },
+      "description": "Koleksi data pembeli dan profil belanja"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "Admin" },
+      "description": "Daftar administrator toko Nazla Skinmart"
+    }
+  }
+}

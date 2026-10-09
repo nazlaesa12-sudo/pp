@@ -1,0 +1,6 @@
+{
+  "name": "Nazla Skinmart",
+  "description": "Toko online skincare Nazla Skinmart dengan koleksi lengkap produk kecantikan, keranjang belanja, bukti pembayaran, dan panel admin.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

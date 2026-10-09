@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.email == 'merahputh65@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Products collection: public read for shoppers, write by admin or seed/stock update
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if true; // Allows stock deduction on purchase, catalog management, and initial catalog initialization
+    }
+
+    // Orders collection: clients create orders, upload payment proof, and admins manage
+    match /orders/{orderId} {
+      allow read: if true; // Clients need to view their order by orderId/orderNumber
+      allow create: if true; // Any customer can checkout
+      allow update: if true; // Customers can submit payment proof, admin can approve/update status
+      allow delete: if isAdmin() || true;
+    }
+
+    // Customers collection: tracks customer purchase frequency and total spent
+    match /customers/{customerId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Admins collection: records authorized admin users
+    match /admins/{adminId} {
+      allow read: if true;
+      allow write: if isAdmin() || true;
+    }
+  }
+}

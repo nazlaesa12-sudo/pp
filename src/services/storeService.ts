@@ -2,13 +2,13 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   addDoc,
   updateDoc,
   deleteDoc,
   onSnapshot,
   query,
-  orderBy,
   runTransaction,
   writeBatch,
 } from 'firebase/firestore';
@@ -30,10 +30,9 @@ export function subscribeProducts(
   onError?: (error: Error) => void
 ) {
   const productsRef = collection(db, PRODUCTS_COLLECTION);
-  const q = query(productsRef);
 
   return onSnapshot(
-    q,
+    productsRef,
     async (snapshot) => {
       if (snapshot.empty) {
         // Auto-seed initial 12 products if database is empty
@@ -50,11 +49,11 @@ export function subscribeProducts(
         const data = docSnap.data();
         products.push({
           id: docSnap.id,
-          name: data.name,
-          category: data.category,
-          price: Number(data.price),
-          originalPrice: Number(data.originalPrice || data.price),
-          stock: Number(data.stock),
+          name: data.name || '',
+          category: data.category || 'Pembersih & Toner',
+          price: Number(data.price) || 0,
+          originalPrice: Number(data.originalPrice || data.price) || 0,
+          stock: Number(data.stock) || 0,
           rating: Number(data.rating || 5.0),
           soldCount: Number(data.soldCount || 0),
           description: data.description || '',
@@ -63,9 +62,9 @@ export function subscribeProducts(
           imageUrl: data.imageUrl || '',
           badge: data.badge || '',
           volume: data.volume || '',
-          benefits: data.benefits || [],
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
+          benefits: Array.isArray(data.benefits) ? data.benefits : [],
+          createdAt: data.createdAt || new Date().toISOString(),
+          updatedAt: data.updatedAt || new Date().toISOString(),
         } as Product);
       });
 
@@ -99,13 +98,11 @@ export async function seedInitialProducts(): Promise<void> {
 
 // Reset products catalog back to initial 12 products
 export async function resetCatalogToDefault(): Promise<void> {
-  // Delete all existing products
   const snapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
   const batch = writeBatch(db);
   snapshot.docs.forEach((d) => batch.delete(d.ref));
   await batch.commit();
 
-  // Re-seed
   await seedInitialProducts();
 }
 
@@ -163,7 +160,10 @@ export interface CreateOrderParams {
   paymentMethod: string;
 }
 
-// Create new order, update stock, and update customer profile atomically
+/**
+ * Create new order, update stock, and update customer profile.
+ * IMPORTANT: To strictly satisfy Firestore rules, all transaction reads execute BEFORE any write.
+ */
 export async function createOrder(params: CreateOrderParams): Promise<Order> {
   const orderNumber = `NZL-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
   const now = new Date().toISOString();
@@ -189,61 +189,144 @@ export async function createOrder(params: CreateOrderParams): Promise<Order> {
   };
 
   const orderDocRef = doc(collection(db, ORDERS_COLLECTION));
+  const customerId = params.customerPhone.replace(/[^0-9]/g, '');
 
-  await runTransaction(db, async (transaction) => {
-    // 1. Check & deduct stocks for each ordered product
-    for (const item of params.items) {
-      const prodRef = doc(db, PRODUCTS_COLLECTION, item.productId);
-      const prodDoc = await transaction.get(prodRef);
-      if (prodDoc.exists()) {
-        const currentStock = Number(prodDoc.data().stock || 0);
-        const currentSold = Number(prodDoc.data().soldCount || 0);
-        const nextStock = Math.max(0, currentStock - item.quantity);
-        const nextSold = currentSold + item.quantity;
-        transaction.update(prodRef, {
-          stock: nextStock,
-          soldCount: nextSold,
+  try {
+    // Attempt atomic transaction with strictly ordered READS followed by WRITES
+    await runTransaction(db, async (transaction) => {
+      // 1. ALL READS FIRST: Read all target products
+      const productSnapshots: {
+        ref: ReturnType<typeof doc>;
+        data: any;
+        quantity: number;
+      }[] = [];
+
+      for (const item of params.items) {
+        if (item.productId) {
+          const prodRef = doc(db, PRODUCTS_COLLECTION, item.productId);
+          const snap = await transaction.get(prodRef);
+          if (snap.exists()) {
+            productSnapshots.push({
+              ref: prodRef,
+              data: snap.data(),
+              quantity: item.quantity,
+            });
+          }
+        }
+      }
+
+      // 2. READ customer if present
+      let custRef = null;
+      let custSnap = null;
+      if (customerId) {
+        custRef = doc(db, CUSTOMERS_COLLECTION, customerId);
+        custSnap = await transaction.get(custRef);
+      }
+
+      // 3. NOW ALL WRITES:
+      // Deduct stock
+      for (const { ref, data, quantity } of productSnapshots) {
+        const currentStock = Number(data.stock || 0);
+        const currentSold = Number(data.soldCount || 0);
+        transaction.update(ref, {
+          stock: Math.max(0, currentStock - quantity),
+          soldCount: currentSold + quantity,
           updatedAt: now,
         });
       }
-    }
 
-    // 2. Save the order document
-    transaction.set(orderDocRef, newOrderData);
+      // Write Order
+      transaction.set(orderDocRef, newOrderData);
 
-    // 3. Update or create customer record
-    // Use sanitized phone as document ID for easy lookup
-    const customerId = params.customerPhone.replace(/[^0-9]/g, '');
-    if (customerId) {
-      const custRef = doc(db, CUSTOMERS_COLLECTION, customerId);
-      const custDoc = await transaction.get(custRef);
-      if (custDoc.exists()) {
-        const custData = custDoc.data();
-        transaction.update(custRef, {
-          name: params.customerName.trim(),
-          email: params.customerEmail.trim() || custData.email,
-          address: params.shippingAddress.trim() || custData.address,
-          city: params.city.trim() || custData.city,
-          totalOrders: Number(custData.totalOrders || 0) + 1,
-          totalSpent: Number(custData.totalSpent || 0) + params.totalAmount,
-          lastOrderDate: now,
-        });
-      } else {
-        transaction.set(custRef, {
-          id: customerId,
-          name: params.customerName.trim(),
-          phone: params.customerPhone.trim(),
-          email: params.customerEmail.trim(),
-          address: params.shippingAddress.trim(),
-          city: params.city.trim(),
-          totalOrders: 1,
-          totalSpent: params.totalAmount,
-          lastOrderDate: now,
-          createdAt: now,
-        });
+      // Write or Update Customer
+      if (custRef && custSnap) {
+        if (custSnap.exists()) {
+          const cData = custSnap.data();
+          transaction.update(custRef, {
+            name: params.customerName.trim(),
+            email: params.customerEmail.trim() || cData.email,
+            address: params.shippingAddress.trim() || cData.address,
+            city: params.city.trim() || cData.city,
+            totalOrders: Number(cData.totalOrders || 0) + 1,
+            totalSpent: Number(cData.totalSpent || 0) + params.totalAmount,
+            lastOrderDate: now,
+          });
+        } else {
+          transaction.set(custRef, {
+            id: customerId,
+            name: params.customerName.trim(),
+            phone: params.customerPhone.trim(),
+            email: params.customerEmail.trim(),
+            address: params.shippingAddress.trim(),
+            city: params.city.trim(),
+            totalOrders: 1,
+            totalSpent: params.totalAmount,
+            lastOrderDate: now,
+            createdAt: now,
+          });
+        }
+      }
+    });
+  } catch (txErr) {
+    console.warn('Transaction failed, falling back to direct write:', txErr);
+    // Direct write fallback
+    await setDoc(orderDocRef, newOrderData);
+
+    // Update stocks individually
+    for (const item of params.items) {
+      if (item.productId) {
+        try {
+          const prodRef = doc(db, PRODUCTS_COLLECTION, item.productId);
+          const snap = await getDoc(prodRef);
+          if (snap.exists()) {
+            const data = snap.data();
+            await updateDoc(prodRef, {
+              stock: Math.max(0, Number(data.stock || 0) - item.quantity),
+              soldCount: Number(data.soldCount || 0) + item.quantity,
+              updatedAt: now,
+            });
+          }
+        } catch (e) {
+          console.error('Error updating stock fallback:', e);
+        }
       }
     }
-  });
+
+    // Update customer individually
+    if (customerId) {
+      try {
+        const custRef = doc(db, CUSTOMERS_COLLECTION, customerId);
+        const snap = await getDoc(custRef);
+        if (snap.exists()) {
+          const cData = snap.data();
+          await updateDoc(custRef, {
+            name: params.customerName.trim(),
+            email: params.customerEmail.trim() || cData.email,
+            address: params.shippingAddress.trim() || cData.address,
+            city: params.city.trim() || cData.city,
+            totalOrders: Number(cData.totalOrders || 0) + 1,
+            totalSpent: Number(cData.totalSpent || 0) + params.totalAmount,
+            lastOrderDate: now,
+          });
+        } else {
+          await setDoc(custRef, {
+            id: customerId,
+            name: params.customerName.trim(),
+            phone: params.customerPhone.trim(),
+            email: params.customerEmail.trim(),
+            address: params.shippingAddress.trim(),
+            city: params.city.trim(),
+            totalOrders: 1,
+            totalSpent: params.totalAmount,
+            lastOrderDate: now,
+            createdAt: now,
+          });
+        }
+      } catch (e) {
+        console.error('Error updating customer fallback:', e);
+      }
+    }
+  }
 
   return {
     id: orderDocRef.id,
@@ -251,46 +334,48 @@ export async function createOrder(params: CreateOrderParams): Promise<Order> {
   };
 }
 
-// Subscribe to real-time orders
+// Subscribe to real-time orders with client-side sorting (immune to index issues)
 export function subscribeOrders(
   onUpdate: (orders: Order[]) => void,
   onError?: (error: Error) => void
 ) {
   const ordersRef = collection(db, ORDERS_COLLECTION);
-  const q = query(ordersRef, orderBy('createdAt', 'desc'));
 
   return onSnapshot(
-    q,
+    ordersRef,
     (snapshot) => {
       const orders: Order[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         orders.push({
           id: docSnap.id,
-          orderNumber: data.orderNumber,
-          customerName: data.customerName,
-          customerPhone: data.customerPhone,
-          customerEmail: data.customerEmail,
-          shippingAddress: data.shippingAddress,
-          city: data.city,
-          notes: data.notes,
-          items: data.items || [],
+          orderNumber: data.orderNumber || docSnap.id,
+          customerName: data.customerName || 'Pelanggan',
+          customerPhone: data.customerPhone || '',
+          customerEmail: data.customerEmail || '',
+          shippingAddress: data.shippingAddress || '',
+          city: data.city || '',
+          notes: data.notes || '',
+          items: Array.isArray(data.items) ? data.items : [],
           totalItems: Number(data.totalItems || 0),
           subtotal: Number(data.subtotal || 0),
           shippingFee: Number(data.shippingFee || 0),
           discount: Number(data.discount || 0),
           totalAmount: Number(data.totalAmount || 0),
-          paymentMethod: data.paymentMethod,
-          status: data.status as OrderStatus,
-          paymentProofUrl: data.paymentProofUrl,
-          paymentSenderBank: data.paymentSenderBank,
-          paymentSenderName: data.paymentSenderName,
-          paymentProofUploadedAt: data.paymentProofUploadedAt,
-          adminNotes: data.adminNotes,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
+          paymentMethod: data.paymentMethod || 'Transfer Bank',
+          status: (data.status as OrderStatus) || 'Menunggu Pembayaran',
+          paymentProofUrl: data.paymentProofUrl || '',
+          paymentSenderBank: data.paymentSenderBank || '',
+          paymentSenderName: data.paymentSenderName || '',
+          paymentProofUploadedAt: data.paymentProofUploadedAt || '',
+          adminNotes: data.adminNotes || '',
+          createdAt: data.createdAt || new Date().toISOString(),
+          updatedAt: data.updatedAt || new Date().toISOString(),
         });
       });
+
+      // Sort by newest createdAt first
+      orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       onUpdate(orders);
     },
     (error) => {
@@ -339,7 +424,7 @@ export async function rejectPaymentProof(orderId: string, reason: string): Promi
   await updateDoc(orderRef, {
     status: 'Menunggu Pembayaran',
     adminNotes: `Bukti transfer ditolak: ${reason}`,
-    paymentProofUrl: '', // Reset proof so customer can re-upload
+    paymentProofUrl: '',
     updatedAt: now,
   });
 }
@@ -379,8 +464,8 @@ export function subscribeCustomers(
         const data = docSnap.data();
         customers.push({
           id: docSnap.id,
-          name: data.name,
-          phone: data.phone,
+          name: data.name || '',
+          phone: data.phone || docSnap.id,
           email: data.email || '',
           address: data.address || '',
           city: data.city || '',

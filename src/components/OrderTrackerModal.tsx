@@ -3,6 +3,7 @@ import { X, Search, Truck, Clock, CheckCircle, AlertCircle, Upload, Eye, FileTex
 import { Order, OrderStatus } from '../types';
 import { uploadOrderPaymentProof } from '../services/storeService';
 import { RibbonBow } from './RibbonDecoration';
+import { compressImage } from '../utils/imageCompressor';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
@@ -383,12 +384,15 @@ export function OrderTrackerModal({
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        const reader = new FileReader();
-                        reader.onload = () => setProofImage(reader.result as string);
-                        reader.readAsDataURL(file);
+                        try {
+                          const compressed = await compressImage(file, 800, 0.7);
+                          setProofImage(compressed);
+                        } catch (err) {
+                          console.error(err);
+                        }
                       }
                     }}
                     className="w-full text-xs"

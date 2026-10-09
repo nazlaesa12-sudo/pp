@@ -3,6 +3,7 @@ import { CheckCircle2, Upload, MessageCircle, Copy, AlertCircle, Loader2, Sparkl
 import { Order } from '../types';
 import { uploadOrderPaymentProof } from '../services/storeService';
 import { RibbonBow } from './RibbonDecoration';
+import { compressImage } from '../utils/imageCompressor';
 
 interface OrderSuccessModalProps {
   order: Order | null;
@@ -39,17 +40,17 @@ export function OrderSuccessModal({
     setTimeout(() => setCopiedOrder(false), 1500);
   };
 
-  // Handle local file upload convert to Data URL for instant proof
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle local file upload with compression to guarantee < 100KB
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        setPreviewImage(result);
-        setProofUrl(result);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImage(file, 800, 0.7);
+        setPreviewImage(compressed);
+        setProofUrl(compressed);
+      } catch (err) {
+        console.error('Compression failed:', err);
+      }
     }
   };
 
